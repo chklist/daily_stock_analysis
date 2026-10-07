@@ -16,7 +16,7 @@
 
 ## 配置与运行
 
-工作流复用仓库 `LLM_CHANNELS`、`LITELLM_MODEL`、`LLM_PRIMARY_*` Variables/Secrets，以及 `ANSPIRE_API_KEYS`、`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID` Secrets；与当前已验证的 primary 渠道一致。密钥不写进代码。
+工作流复用仓库 `LLM_CHANNELS`、`LITELLM_MODEL`、`LLM_PRIMARY_*` Variables/Secrets，以及 `ANSPIRE_API_KEYS`、`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID` Secrets；与当前已验证的 primary 渠道一致。密钥不写进代码。可选 `TICKFLOW_API_KEY` 仓库 Secret 同时供每日分析和主动选股的 DSA 复核使用，支持 `TICKFLOW_PRIORITY`、`TICKFLOW_KLINE_ADJUST`、`TICKFLOW_BATCH_DAILY_ENABLED` 和 `TICKFLOW_BATCH_SIZE` 参数；不改变独立初筛快照来源与资金流采集路径。
 
 Actions → 主动选股与深度分析 → Run workflow：
 
