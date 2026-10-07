@@ -1,0 +1,114 @@
+name: 主动选股与深度分析
+
+on:
+  schedule:
+    - cron: '15 10 * * 1-5' # 北京时间工作日 18:15；程序再校验交易日
+  workflow_dispatch:
+    inputs:
+      strategy:
+        description: 选股策略
+        type: choice
+        default: balanced_alpha
+        options: [balanced_alpha, quality_value, dual_low]
+      force_run:
+        description: 非交易日验证（使用最近完整交易日并标注）
+        type: boolean
+        default: false
+      screen_only:
+        description: 仅验证选股与行情，不调用模型、不推送
+        type: boolean
+        default: false
+      notify:
+        description: 完整分析后推送 Telegram
+        type: boolean
+        default: true
+  push:
+    paths:
+      - scripts/run_proactive_screening.py
+      - scripts/tests/test_proactive_screening.py
+      - .github/workflows/01-proactive-screening.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: proactive-screening-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - run: python -m pip install pandas 'exchange-calendars>=4.13.0'
+      - run: python -m unittest discover -s scripts/tests -p test_proactive_screening.py -v
+
+  screen-and-analyze:
+    if: github.event_name != 'push'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TZ: Asia/Shanghai
+      PYTHONUNBUFFERED: '1'
+      SCREENING_ENABLED: 'true'
+      SCREENING_SNAPSHOT_CACHE_TTL_SEC: '0'
+      MAX_WORKERS: '1'
+      SINGLE_STOCK_NOTIFY: 'false'
+      MARKET_REVIEW_ENABLED: 'false'
+      ENABLE_CHIP_DISTRIBUTION: 'false'
+      REPORT_LANGUAGE: zh
+      REALTIME_SOURCE_PRIORITY: tencent,akshare_sina,efinance,akshare_em
+      NOTIFICATION_REPORT_CHANNELS: telegram
+      LLM_CHANNELS: ${{ vars.LLM_CHANNELS || secrets.LLM_CHANNELS }}
+      LITELLM_MODEL: ${{ vars.LITELLM_MODEL || secrets.LITELLM_MODEL }}
+      LITELLM_FALLBACK_MODELS: ${{ vars.LITELLM_FALLBACK_MODELS || secrets.LITELLM_FALLBACK_MODELS }}
+      LLM_PRIMARY_PROTOCOL: ${{ vars.LLM_PRIMARY_PROTOCOL || secrets.LLM_PRIMARY_PROTOCOL }}
+      LLM_PRIMARY_API_SURFACE: ${{ vars.LLM_PRIMARY_API_SURFACE || secrets.LLM_PRIMARY_API_SURFACE }}
+      LLM_PRIMARY_BASE_URL: ${{ vars.LLM_PRIMARY_BASE_URL || secrets.LLM_PRIMARY_BASE_URL }}
+      LLM_PRIMARY_API_KEY: ${{ secrets.LLM_PRIMARY_API_KEY }}
+      LLM_PRIMARY_API_KEYS: ${{ secrets.LLM_PRIMARY_API_KEYS }}
+      LLM_PRIMARY_MODELS: ${{ vars.LLM_PRIMARY_MODELS || secrets.LLM_PRIMARY_MODELS }}
+      LLM_PRIMARY_EXTRA_HEADERS: ${{ vars.LLM_PRIMARY_EXTRA_HEADERS || secrets.LLM_PRIMARY_EXTRA_HEADERS }}
+      TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
+      ANSPIRE_API_KEYS: ${{ secrets.ANSPIRE_API_KEYS }}
+      BOCHA_API_KEYS: ${{ secrets.BOCHA_API_KEYS }}
+      TAVILY_API_KEYS: ${{ secrets.TAVILY_API_KEYS }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      TELEGRAM_MESSAGE_THREAD_ID: ${{ secrets.TELEGRAM_MESSAGE_THREAD_ID }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: 安装项目依赖（已包含 AlphaSift 衍生选股引擎）
+        run: python -m pip install -r requirements.txt
+      - name: 全市场筛选、数据校验、DSA 复核与推送
+        env:
+          STRATEGY: ${{ inputs.strategy || 'balanced_alpha' }}
+          FORCE_RUN: ${{ inputs.force_run || false }}
+          SCREEN_ONLY: ${{ inputs.screen_only || false }}
+          NOTIFY: ${{ github.event_name == 'schedule' || inputs.notify }}
+        run: |
+          mkdir -p reports/proactive logs
+          args=(--strategy "$STRATEGY" --top 3 --min-score 60)
+          if [ "$FORCE_RUN" = "true" ]; then args+=(--force-run); fi
+          if [ "$SCREEN_ONLY" = "true" ]; then args+=(--screen-only); fi
+          if [ "$NOTIFY" = "true" ]; then args+=(--notify); fi
+          set -o pipefail
+          python scripts/run_proactive_screening.py "${args[@]}" 2>&1 | tee logs/proactive-screening.log
+      - name: 保存选股依据、复核结果和日志
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: proactive-screening-${{ github.run_number }}
+          path: |
+            reports/
+            logs/
+          retention-days: 30

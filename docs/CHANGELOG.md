@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- [新功能] 新增 Actions 主动选股：复用内置 AlphaSift 衍生引擎筛选最多 3 只候选，校验交易日与行情时效，再经 DSA 深度复核后推送 Telegram 观察名单。
+
 - [测试] 修复股票名称解析冷启动超时并发测试的同步竞态：在放行后台抓取前确认两个等待者均已结束并返回空结果，避免 Docker 发布门禁偶发失败。
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
