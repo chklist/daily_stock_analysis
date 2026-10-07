@@ -140,11 +140,16 @@ def collect_metadata(codes, expected, budget=180):
     def cached_call(operation, args, ttl, timeout, required):
         import json
         key = operation + json.dumps(args, sort_keys=True)
+        is_heat = operation.endswith("_heat")
+        # One broken board must not disable every index from this provider.
+        # Heat keys include the symbol and requested trading session. Ignore legacy
+        # provider-wide heat cooldowns, while keeping successful cached histories.
+        cooldown_key = "cooldown:board-v2:" + key if is_heat else "cooldown:" + operation
         records = cache.get(key, ttl)
         status = "cache_hit"
         started = time.monotonic()
         if records is None:
-            if cache.get("cooldown:" + operation, 1800):
+            if cache.get(cooldown_key, 1800):
                 status = "cooldown"
             elif deadline - started < 2:
                 status = "budget_exhausted"
@@ -157,16 +162,19 @@ def collect_metadata(codes, expected, budget=180):
                     records = None
                     status = payload.get("error") or "EmptyOrInvalidSchema"
                     failures[operation] = failures.get(operation, 0) + 1
-                    if "catalogue" in operation or failures[operation] >= 2:
-                        cache.put("cooldown:" + operation, True)
-                elif operation.endswith("_heat") and dated_heat(pd.DataFrame(records), expected) is None:
+                    if is_heat or "catalogue" in operation or failures[operation] >= 2:
+                        cache.put(cooldown_key, True)
+                elif is_heat and dated_heat(pd.DataFrame(records), expected) is None:
                     records = None
                     status = "StaleOrInvalidHeat"
                 else:
+                    failures[operation] = 0
                     cache.put(key, records)
         elapsed = round((time.monotonic() - started) * 1000)
-        diagnostics.append({"task": operation, "status": status, "elapsed_ms": elapsed})
-        LOG.info("[screening_metadata] %s %s %sms", operation, status, elapsed)
+        diagnostics.append({"task": operation, "status": status, "elapsed_ms": elapsed,
+                            "symbol": args.get("symbol", ""), "data_date": args.get("end", "")})
+        LOG.info("[screening_metadata] %s symbol=%s date=%s %s %sms",
+                 operation, args.get("symbol", ""), args.get("end", ""), status, elapsed)
         return pd.DataFrame(records) if records else pd.DataFrame()
 
     # F10 supplies verified per-stock memberships and board IDs in one batch,
@@ -226,6 +234,8 @@ def collect_metadata(codes, expected, budget=180):
             heat[name] = dict(value, name=name)
     for item in metadata.values():
         item["themes"] = [heat[name] for name in item["concepts"] if name in heat]
+        item["missing_index_themes"] = [name for name in item["concepts"] if name not in heat]
+    LOG.info("[screening_metadata] unique_index_coverage=%s/%s", len(heat), len(pending))
     return metadata, diagnostics
 
 

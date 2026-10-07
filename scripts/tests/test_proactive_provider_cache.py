@@ -14,6 +14,50 @@ from scripts.proactive_metadata import collect_metadata
 
 
 class CacheTests(TestCase):
+    def test_heat_failure_isolated_by_board_and_session(self):
+        class Manager:
+            def _run_with_timeout(self, task, *args):
+                return task(), None, 0
+
+        modules = {"efinance": SimpleNamespace(stock=SimpleNamespace(
+                       get_base_info=lambda _: pd.DataFrame())),
+                   "data_provider": SimpleNamespace(DataFetcherManager=Manager),
+                   "data_provider.tickflow_fetcher": SimpleNamespace(TickFlowFetcher=object)}
+        calls = []
+
+        def provider(operation, args, timeout):
+            calls.append((operation, dict(args)))
+            if operation == "f10_membership":
+                return {"records": [dict(SECURITY_CODE="601668", BOARD_NAME=name,
+                                         NEW_BOARD_CODE=board, IS_PRECISE=1,
+                                         SELECTED_BOARD_REASON="verified membership")
+                                    for name, board in [("A", "BK0001"), ("B", "BK0002"),
+                                                        ("C", "BK0003"), ("D", "BK0004")]]}
+            if operation == "em_heat" and args["symbol"] in {"BK0002", "BK0004"}:
+                day = "2026-09-30" if args["end"] == "20260930" else "2026-10-08"
+                return {"records": [{"日期": day, "涨跌幅": 1.2}]}
+            return {"error": "TimeoutKilled"}
+
+        with TemporaryDirectory() as folder, patch.dict("sys.modules", modules), \
+                patch.dict("os.environ", {"TICKFLOW_API_KEY": ""}), \
+                patch("scripts.proactive_provider_cache.ProviderCache", return_value=ProviderCache(folder)), \
+                patch("scripts.proactive_provider_cache.isolated_fetch", side_effect=provider):
+            ProviderCache(folder).put("cooldown:em_heat", True)  # legacy poisoned provider cache
+            meta, diag = collect_metadata(["601668"], date(2026, 9, 30))
+            self.assertEqual([t["name"] for t in meta["601668"]["themes"]], ["B", "D"])
+            self.assertEqual(meta["601668"]["missing_index_themes"], ["A", "C"])
+            self.assertEqual(len([c for c in calls if c[0] == "em_heat"]), 4)
+            self.assertEqual([d["symbol"] for d in diag if d["task"] == "em_heat"],
+                             ["BK0001", "BK0002", "BK0003", "BK0004"])
+            meta, diag = collect_metadata(["601668"], date(2026, 9, 30))
+            self.assertEqual(len([c for c in calls if c[0] == "em_heat"]), 4)
+            self.assertEqual([d["status"] for d in diag if d["task"] == "em_heat"],
+                             ["cooldown", "cache_hit", "cooldown", "cache_hit"])
+            self.assertEqual(len(meta["601668"]["themes"]), 2)
+            meta, _ = collect_metadata(["601668"], date(2026, 10, 8))
+            self.assertEqual(len([c for c in calls if c[0] == "em_heat"]), 8)
+            self.assertTrue(all(t["date"] == "2026-10-08" for t in meta["601668"]["themes"]))
+
     def test_independent_fallback_cache_and_stale_heat(self):
         class Manager:
             def _run_with_timeout(self, task, *args):
