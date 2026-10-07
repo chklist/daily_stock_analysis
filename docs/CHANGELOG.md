@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- [修复] 主动选股 Actions 增加 TickFlow 密钥及可选参数映射，与每日分析使用同一仓库 Secret。
+
 - [修复] A 股基本面优先采集个股资金流，显式区分沪深北市场并按日期解析净额；移除默认股票及排名占比兜底，分析路径跳过可选板块资金流，新增超时诊断与沪深在线验证工作流。
 - [新功能] 新增 Actions 主动选股：复用内置 AlphaSift 衍生引擎筛选最多 3 只候选，校验交易日与行情时效，再经 DSA 深度复核后推送 Telegram 观察名单。
 
