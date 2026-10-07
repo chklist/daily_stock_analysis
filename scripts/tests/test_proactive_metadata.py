@@ -33,6 +33,16 @@ class MetadataTests(TestCase):
         self.assertEqual(selected, [])
         self.assertIn("行业未知", audit["1"]["rejection"])
 
+    def test_sw1_nonbank_finance_cannot_escape_strategy_alias_override(self):
+        self.cfg.portfolio_profile = {"buckets": {"金融": ["券商", "银行", "保险"]}}
+        metadata = {"1": {"industry": "非银金融"}, "2": {"industry": "银行"},
+                    "3": {"industry": "证券"}, "4": {"industry": "建筑装饰"}}
+        selected, audit = enrich_and_select([pick(str(i), 90-i) for i in range(1, 5)],
+                                           metadata, DAY, self.cfg)
+        self.assertEqual([p.code for p in selected], ["1", "4"])
+        self.assertEqual(audit["2"]["bucket"], "金融")
+        self.assertEqual(audit["3"]["bucket"], "金融")
+
     def test_stale_missing_and_invalid_heat_add_no_points(self):
         metadata = {"1": {"industry": "银行", "themes": [
             {"date": "2026-09-29", "score": 100, "source": "test"},

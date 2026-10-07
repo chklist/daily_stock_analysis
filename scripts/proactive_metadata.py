@@ -168,7 +168,11 @@ def enrich_and_select(picks, metadata, expected, screening, top=3):
         pick.screen_score = max(0.0, min(100.0, pick.screen_score + delta))
         pick.final_score = max(0.0, min(100.0, pick.final_score + delta))
         pick.factor_scores["theme_heat"] = score
-        bucket = _portfolio_bucket(pick.industry, buckets=screening.portfolio_profile.get("buckets"))
+        # Strategy aliases override the generic map; preserve SW1 financial categories
+        # explicitly so "非银金融" cannot escape a custom bank/insurance-only alias list.
+        financial = any(alias in pick.industry for alias in ("金融", "银行", "保险", "证券", "券商"))
+        bucket = "金融" if financial else _portfolio_bucket(
+            pick.industry, buckets=screening.portfolio_profile.get("buckets"))
         row = dict(item, industry=pick.industry, bucket=bucket, verified_themes=themes,
                    theme_status="verified_partial" if themes else "missing_or_stale",
                    theme_score=score, theme_weight=weight, score_before=before,
