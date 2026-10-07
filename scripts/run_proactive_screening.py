@@ -153,6 +153,10 @@ def execute(args, *, now=None, screen_fn=None, history_fn=None, pipeline_factory
         results = pipeline.run(stock_codes=audit["analysis_codes"], send_notification=False,
                                current_time=now) if candidates else []
         audit["analyses"] = [r.to_dict() for r in results]
+        audit["capital_flow_diagnostics"] = {
+            r.code: (getattr(r, "fundamental_context", None) or {}).get("capital_flow", {})
+            for r in results
+        }
         by_code = {r.code: r for r in results}
         approved = []
         failed = []

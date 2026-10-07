@@ -4260,6 +4260,23 @@ class DataFetcherManager:
             nonlocal remaining_seconds
             remaining_seconds = max(0.0, remaining_seconds - consumed_ms / 1000.0)
 
+        # Reserve the first bounded request for stock flow: slow financial
+        # statements must not consume its entire stage budget. Sector flow is
+        # optional and must not delay an already available individual result.
+        if not is_etf:
+            capital_flow_budget = min(fetch_timeout, remaining_seconds)
+            capital_flow_start = time.time()
+            result_ctx["capital_flow"] = self.get_capital_flow_context(
+                stock_code, budget_seconds=capital_flow_budget, include_sector=False,
+            )
+            _consume_budget(int((time.time() - capital_flow_start) * 1000))
+            block = result_ctx["capital_flow"]
+            logger.info(
+                "[capital_flow] code=%s budget=%.2fs status=%s sources=%s errors=%s",
+                stock_code, capital_flow_budget, block.get("status"),
+                block.get("source_chain", []), block.get("errors", []),
+            )
+
         valuation_timeout = min(fetch_timeout, remaining_seconds)
         if valuation_timeout > 0:
             quote_payload, valuation_err, valuation_ms = self._run_with_retry(
@@ -4432,14 +4449,6 @@ class DataFetcherManager:
             )
             result_ctx["status"] = "partial"
         else:
-            capital_flow_budget = min(fetch_timeout, remaining_seconds)
-            capital_flow_start = time.time()
-            result_ctx["capital_flow"] = self.get_capital_flow_context(
-                stock_code,
-                budget_seconds=capital_flow_budget,
-            )
-            _consume_budget(int((time.time() - capital_flow_start) * 1000))
-
             dragon_tiger_budget = min(fetch_timeout, remaining_seconds)
             dragon_tiger_start = time.time()
             result_ctx["dragon_tiger"] = self.get_dragon_tiger_context(
@@ -4497,7 +4506,10 @@ class DataFetcherManager:
             self._prune_fundamental_cache(cache_ttl, cache_max_entries)
         return result_ctx
 
-    def get_capital_flow_context(self, stock_code: str, budget_seconds: Optional[float] = None) -> Dict[str, Any]:
+    def get_capital_flow_context(
+        self, stock_code: str, budget_seconds: Optional[float] = None,
+        *, include_sector: bool = True,
+    ) -> Dict[str, Any]:
         """资金流向块（fail-open）。"""
         from src.config import get_config
 
@@ -4520,7 +4532,7 @@ class DataFetcherManager:
                 ["fundamental stage timeout"],
             )
         payload, err, cost_ms = self._run_with_retry(
-            lambda: self._fundamental_adapter.get_capital_flow(stock_code),
+            lambda: self._fundamental_adapter.get_capital_flow(stock_code, include_sector=include_sector),
             timeout,
             "capital_flow",
         )

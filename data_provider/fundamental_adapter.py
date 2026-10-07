@@ -9,6 +9,7 @@ endpoint candidates. It should never raise to caller; partial data is allowed.
 from __future__ import annotations
 
 import logging
+import math
 import re
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
@@ -261,6 +262,38 @@ def _extract_latest_row(df: pd.DataFrame, stock_code: str) -> Optional[pd.Series
     return df.iloc[0]
 
 
+
+def _parse_stock_flow_history(df: pd.DataFrame, stock_code: str) -> Dict[str, Any]:
+    """Read dated CNY net amounts; never interpret ranks or percentages as money."""
+    work = df.copy()
+    for column in ("代码", "股票代码", "证券代码"):
+        if column in work.columns:
+            work = work[work[column].astype(str).map(_normalize_code) == stock_code]
+            break
+    if work.empty or "日期" not in work or "主力净流入-净额" not in work:
+        raise ValueError("missing_stock_date_or_net_amount")
+    work["日期"] = pd.to_datetime(work["日期"], errors="coerce")
+    work = work.dropna(subset=["日期"]).sort_values("日期").drop_duplicates("日期", keep="last")
+    if work.empty:
+        raise ValueError("invalid_flow_dates")
+    values = pd.to_numeric(work["主力净流入-净额"], errors="coerce")
+    if not math.isfinite(float(values.iloc[-1])):
+        raise ValueError("invalid_latest_net_amount")
+
+    def rolling_amount(days: int) -> Optional[float]:
+        tail = values.tail(days)
+        if len(tail) != days or not all(math.isfinite(float(v)) for v in tail):
+            return None
+        return float(tail.sum())
+
+    return {
+        "main_net_inflow": float(values.iloc[-1]),
+        "inflow_5d": rolling_amount(5),
+        "inflow_10d": rolling_amount(10),
+        "data_date": work["日期"].iloc[-1].date().isoformat(),
+    }
+
+
 class AkshareFundamentalAdapter:
     """AkShare adapter for fundamentals, capital flow and dragon-tiger signals."""
 
@@ -413,7 +446,9 @@ class AkshareFundamentalAdapter:
         result["status"] = "partial" if has_content else "not_supported"
         return result
 
-    def get_capital_flow(self, stock_code: str, top_n: int = 5) -> Dict[str, Any]:
+    def get_capital_flow(
+        self, stock_code: str, top_n: int = 5, *, include_sector: bool = True,
+    ) -> Dict[str, Any]:
         """
         Return stock + sector capital flow.
         """
@@ -425,26 +460,31 @@ class AkshareFundamentalAdapter:
             "errors": [],
         }
 
+        # Never call this endpoint without the requested code: AkShare has a
+        # default stock, and a code-less historical frame cannot be cross-checked.
+        code = _normalize_code(stock_code)
+        if not re.fullmatch(r"\d{6}", code):
+            result["errors"].append("capital_stock:invalid_code")
+            return result
+        market = "sh" if code.startswith("6") else "bj" if code.startswith(("4", "8", "92")) else "sz"
         stock_df, stock_source, stock_errors = self._call_df_candidates([
-            ("stock_individual_fund_flow", {"stock": stock_code}),
-            ("stock_individual_fund_flow", {"symbol": stock_code}),
-            ("stock_individual_fund_flow", {}),
-            ("stock_main_fund_flow", {"symbol": stock_code}),
-            ("stock_main_fund_flow", {}),
+            ("stock_individual_fund_flow", {"stock": code, "market": market}),
         ])
         result["errors"].extend(stock_errors)
         if stock_df is not None:
-            row = _extract_latest_row(stock_df, stock_code)
-            if row is not None:
-                net_inflow = _safe_float(_pick_by_keywords(row, ["主力净流入", "净流入", "净额"]))
-                inflow_5d = _safe_float(_pick_by_keywords(row, ["5日", "五日"]))
-                inflow_10d = _safe_float(_pick_by_keywords(row, ["10日", "十日"]))
-                result["stock_flow"] = {
-                    "main_net_inflow": net_inflow,
-                    "inflow_5d": inflow_5d,
-                    "inflow_10d": inflow_10d,
-                }
+            try:
+                result["stock_flow"] = _parse_stock_flow_history(stock_df, code)
                 result["source_chain"].append(f"capital_stock:{stock_source}")
+            except ValueError as exc:
+                result["errors"].append(f"capital_stock:{exc}")
+        else:
+            result["errors"].append("capital_stock:empty_or_unavailable")
+
+        # The main-fund-flow ranking endpoint exposes ratios/ranks, not the
+        # net amounts needed by decision stability; do not treat it as fallback.
+        if not include_sector:
+            result["status"] = "partial" if result["stock_flow"] else "failed"
+            return result
 
         sector_df, sector_source, sector_errors = self._call_df_candidates([
             ("stock_sector_fund_flow_rank", {}),

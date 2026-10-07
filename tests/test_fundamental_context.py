@@ -380,7 +380,7 @@ class TestFundamentalContext(unittest.TestCase):
         }
         budgets = {}
 
-        def _capital_flow_side_effect(_stock_code: str, budget_seconds: float = 0.0):
+        def _capital_flow_side_effect(_stock_code: str, budget_seconds: float = 0.0, **_kwargs):
             budgets["capital_flow"] = budget_seconds
             return {"status": "not_supported", "source_chain": [], "errors": [], "data": {}}
 
