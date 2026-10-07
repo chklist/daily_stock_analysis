@@ -25,6 +25,13 @@ on:
   push:
     paths:
       - scripts/run_proactive_screening.py
+      - data_provider/eastmoney_history.py
+      - data_provider/base.py
+      - data_provider/fundamental_adapter.py
+      - src/analyzer.py
+      - src/config.py
+      - src/notification_sender/telegram_sender.py
+      - tests/test_provider_reliability.py
       - scripts/tests/test_proactive_screening.py
       - scripts/proactive_metadata.py
       - scripts/proactive_provider_cache.py
@@ -62,6 +69,7 @@ jobs:
       SCREENING_ENABLED: 'true'
       SCREENING_SNAPSHOT_CACHE_TTL_SEC: '0'
       MAX_WORKERS: '1'
+      LLM_STREAM_ENABLED: 'false'
       SINGLE_STOCK_NOTIFY: 'false'
       MARKET_REVIEW_ENABLED: 'false'
       ENABLE_CHIP_DISTRIBUTION: 'false'
@@ -100,6 +108,8 @@ jobs:
           cache: pip
       - name: 安装项目依赖（已包含 AlphaSift 衍生选股引擎）
         run: python -m pip install -r requirements.txt
+      - name: 验证数据回退、缓存与通知回归
+        run: python -m unittest discover -s tests -p 'test_provider_reliability.py' -v
       - name: 恢复概念目录和归属缓存
         uses: actions/cache/restore@v4
         with:

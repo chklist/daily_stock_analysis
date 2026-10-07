@@ -668,6 +668,8 @@ class DataFetcherManager:
         self._fetcher_call_locks_lock = RLock()
         self._stock_name_cache: Dict[str, str] = {}
         self._stock_name_cache_lock = RLock()
+        self._sector_rankings_lock = RLock()
+        self._sector_rankings_cache = {}
         
         if fetchers:
             # 按优先级排序
@@ -4556,7 +4558,7 @@ class DataFetcherManager:
         elif adapter_status == "not_supported":
             capital_flow_status = "not_supported"
         else:
-            capital_flow_status = "partial"
+            capital_flow_status = "failed"
 
         return self._build_fundamental_block(
             capital_flow_status,
@@ -4682,6 +4684,21 @@ class DataFetcherManager:
         )
 
     def _get_sector_rankings_with_meta(
+        self, n: int = 5,
+    ) -> Tuple[List[Dict], List[Dict], List[Dict[str, Any]], str]:
+        """Share completed and in-flight market-wide queries within this manager."""
+        from copy import deepcopy
+
+        with self._sector_rankings_lock:
+            cached = self._sector_rankings_cache.get(n)
+            if cached and cached[0] > time.monotonic():
+                return deepcopy(cached[1])
+            result = self._fetch_sector_rankings_with_meta(n)
+            ttl = 300 if result[0] or result[1] else 30
+            self._sector_rankings_cache[n] = (time.monotonic() + ttl, deepcopy(result))
+            return result
+
+    def _fetch_sector_rankings_with_meta(
             self,
             n: int = 5,
         ) -> Tuple[List[Dict], List[Dict], List[Dict[str, Any]], str]:

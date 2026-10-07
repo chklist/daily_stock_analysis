@@ -309,6 +309,9 @@ class AkshareFundamentalAdapter:
 
         for func_name, kwargs in candidates:
             fn = getattr(ak, func_name, None)
+            if func_name == "stock_individual_fund_flow":
+                from data_provider.eastmoney_history import stock_flow_history
+                fn = stock_flow_history
             if fn is None:
                 continue
             try:

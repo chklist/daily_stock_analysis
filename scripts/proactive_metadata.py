@@ -139,12 +139,13 @@ def collect_metadata(codes, expected, budget=180):
 
     def cached_call(operation, args, ttl, timeout, required):
         import json
-        key = operation + json.dumps(args, sort_keys=True)
+        versioned_operation = "v3:" + operation if operation == "ths_catalogue" else operation
+        key = versioned_operation + json.dumps(args, sort_keys=True)
         is_heat = operation.endswith("_heat")
         # One broken board must not disable every index from this provider.
         # Heat keys include the symbol and requested trading session. Ignore legacy
         # provider-wide heat cooldowns, while keeping successful cached histories.
-        cooldown_key = "cooldown:board-v2:" + key if is_heat else "cooldown:" + operation
+        cooldown_key = "cooldown:board-v3:" + key if is_heat else "cooldown:" + versioned_operation
         records = cache.get(key, ttl)
         status = "cache_hit"
         started = time.monotonic()
@@ -221,6 +222,8 @@ def collect_metadata(codes, expected, budget=180):
         args = {"symbol": concept_map[name] if operation == "em_heat" else name,
                 "start": (expected - timedelta(days=10)).strftime("%Y%m%d"),
                 "end": expected.strftime("%Y%m%d")}
+        if operation == "ths_heat":
+            args["board_code"] = concept_map[name]
         frame = cached_call(operation, args, 86400, 15, {"日期", "涨跌幅"})
         value = dated_heat(frame, expected, operation)
         if value is None and operation == "em_heat":
@@ -228,6 +231,7 @@ def collect_metadata(codes, expected, budget=180):
             ths = cached_call("ths_catalogue", {}, 7 * 86400, 30, {"板块名称", "板块代码"})
             if not ths.empty and name in set(ths["板块名称"].astype(str)):
                 args["symbol"] = name
+                args["board_code"] = str(ths.loc[ths["板块名称"] == name, "板块代码"].iloc[0])
                 frame = cached_call("ths_heat", args, 86400, 15, {"日期", "涨跌幅"})
                 value = dated_heat(frame, expected, "ths_heat")
         if value is not None:

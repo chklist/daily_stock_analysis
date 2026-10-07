@@ -384,7 +384,7 @@ class TelegramSender:
         # Escape special characters for Telegram Markdown, but preserve link syntax [text](url)
         # Step 1: temporarily protect markdown links
         import uuid as _uuid
-        _link_placeholder = f"__LINK_{_uuid.uuid4().hex[:8]}__"
+        _link_placeholder = f"DSALINK{_uuid.uuid4().hex}TOKEN"
         _links = []
         def _save_link(m):
             _links.append(m.group(0))
@@ -392,7 +392,7 @@ class TelegramSender:
         result = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', _save_link, result)
 
         # Step 2: escape remaining special chars
-        for char in ['[', ']', '(', ')']:
+        for char in ['_', '[', ']', '(', ')']:
             result = result.replace(char, f'\\{char}')
 
         # Step 3: restore links

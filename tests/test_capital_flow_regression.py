@@ -22,7 +22,8 @@ def test_requested_code_and_market_without_unscoped_fallback(code, market):
     endpoint = Mock(return_value=history())
     sector = Mock(side_effect=AssertionError("sector must not block stock result"))
     fake_ak = SimpleNamespace(stock_individual_fund_flow=endpoint, stock_sector_fund_flow_rank=sector)
-    with patch.dict("sys.modules", {"akshare": fake_ak}):
+    with patch.dict("sys.modules", {"akshare": fake_ak}), \
+            patch("data_provider.eastmoney_history.stock_flow_history", endpoint):
         result = AkshareFundamentalAdapter().get_capital_flow(code, include_sector=False)
     endpoint.assert_called_once_with(stock=code, market=market)
     sector.assert_not_called()
@@ -64,7 +65,8 @@ def test_reject_ratio_only_or_wrong_stock_frames():
 
 def test_endpoint_failure_is_explicit_and_never_calls_default_stock():
     endpoint = Mock(side_effect=ConnectionError("unavailable"))
-    with patch.dict("sys.modules", {"akshare": SimpleNamespace(stock_individual_fund_flow=endpoint)}):
+    with patch.dict("sys.modules", {"akshare": SimpleNamespace(stock_individual_fund_flow=endpoint)}), \
+            patch("data_provider.eastmoney_history.stock_flow_history", endpoint):
         result = AkshareFundamentalAdapter().get_capital_flow("000001", include_sector=False)
     assert endpoint.call_count == 1
     assert result["status"] == "failed"
