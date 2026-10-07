@@ -17,6 +17,25 @@ def valid_text(value):
     return "" if text.lower() in {"nan", "none", "null", "unknown", "未知", "--", "-"} else text
 
 
+def diagnose():
+    """Independently verify metadata even when full-market snapshots are down."""
+    from datetime import datetime
+    import json
+    from pathlib import Path
+    from zoneinfo import ZoneInfo
+    from scripts.run_proactive_screening import session_context
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    expected, _ = session_context(datetime.now(ZoneInfo("Asia/Shanghai")), True)
+    metadata, diagnostics = collect_metadata(["601318", "601328", "600519"], expected)
+    output = Path("reports/proactive")
+    output.mkdir(parents=True, exist_ok=True)
+    payload = {"data_date": str(expected), "metadata": metadata, "diagnostics": diagnostics}
+    (output / "metadata-check.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
+    LOG.info("Metadata probe: %s", json.dumps(metadata, ensure_ascii=False))
+
+
 def dated_heat(frame, expected):
     """Never interpret undated rankings or stale board history as current heat."""
     if frame is None or frame.empty or not {"日期", "涨跌幅"}.issubset(frame.columns):
@@ -177,3 +196,7 @@ def enrich_and_select(picks, metadata, expected, screening, top=3):
             selected.append(pick)
             row["selected"] = True
     return selected, audit
+
+
+if __name__ == "__main__":
+    diagnose()
