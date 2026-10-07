@@ -2,9 +2,36 @@
 import json
 from pathlib import Path
 import sys
+import re
+
+
+def f10_membership(codes):
+    import pandas as pd
+    import requests
+    if not codes or not all(re.fullmatch(r"\d{6}", code) for code in codes):
+        raise ValueError("invalid stock codes")
+    rows = []
+    with requests.Session() as session:
+        for page in range(1, 5):
+            response = session.get("https://datacenter-web.eastmoney.com/api/data/v1/get", params={
+                "reportName": "RPT_F10_CORETHEME_BOARDTYPE", "columns": "ALL",
+                "filter": '(SECURITY_CODE in ("' + '","'.join(codes) + '"))',
+                "pageSize": 1000, "pageNumber": page, "source": "WEB", "client": "WEB"},
+                timeout=(4, 12))
+            response.raise_for_status()
+            payload = response.json()
+            if payload.get("success") is not True or not isinstance(payload.get("result"), dict):
+                raise ValueError("invalid F10 response")
+            result = payload["result"]
+            rows.extend(result.get("data") or [])
+            if page >= int(result.get("pages", 1)):
+                return pd.DataFrame(rows)
+    raise ValueError("incomplete F10 pages")
 
 
 def fetch(operation, args):
+    if operation == "f10_membership":
+        return f10_membership(args["codes"])
     import akshare as ak
     if operation == "em_catalogue":
         return ak.stock_board_concept_name_em()

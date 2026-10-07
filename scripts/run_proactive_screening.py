@@ -118,8 +118,9 @@ def execute(args, *, now=None, screen_fn=None, history_fn=None, pipeline_factory
                                       if row.get("rejection")})
             result.portfolio_diversity_enabled = True
             result.portfolio_concentration_notes = ["行业信息验证后，同一大类硬限制最多一只"]
-            LOG.info("[screening_metadata] pool=%s industry=%s theme=%s selected=%s",
+            LOG.info("[screening_metadata] pool=%s industry=%s concepts=%s heat=%s selected=%s",
                      len(details), sum(bool(r["industry"]) for r in details.values()),
+                     sum(bool(r.get("concepts")) for r in details.values()),
                      sum(bool(r["verified_themes"]) for r in details.values()),
                      [(p.code, p.industry) for p in result.picks])
             if details and not result.picks:

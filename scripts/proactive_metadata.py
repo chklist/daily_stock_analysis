@@ -5,6 +5,7 @@ from datetime import date, timedelta
 import logging
 import math
 import os
+import re
 import time
 
 import pandas as pd
@@ -15,6 +16,22 @@ LOG = logging.getLogger(__name__)
 def valid_text(value):
     text = str(value or "").strip()
     return "" if text.lower() in {"nan", "none", "null", "unknown", "未知", "--", "-"} else text
+
+
+def precise_f10_concepts(records, code):
+    """Accept provider-confirmed thematic membership with explicit supporting text."""
+    result = {}
+    for row in records:
+        if str(row.get("SECURITY_CODE", "")) != code or str(row.get("IS_PRECISE")) != "1":
+            continue
+        if row.get("BOARD_TYPE") in {"行业", "板块", "地域"}:
+            continue
+        reason = valid_text(row.get("SELECTED_BOARD_REASON"))
+        name = valid_text(row.get("BOARD_NAME"))
+        board = valid_text(row.get("NEW_BOARD_CODE"))
+        if name and reason and re.fullmatch(r"BK\d{4,6}", board):
+            result[name] = {"code": board, "reason": reason}
+    return result
 
 
 def diagnose():
@@ -152,17 +169,31 @@ def collect_metadata(codes, expected, budget=180):
         LOG.info("[screening_metadata] %s %s %sms", operation, status, elapsed)
         return pd.DataFrame(records) if records else pd.DataFrame()
 
-    # Catalogue/membership are slow-changing metadata. Heat is keyed by session below.
-    catalogue = cached_call("em_catalogue", {}, 7 * 86400, 45, {"板块名称", "板块代码"})
+    # F10 supplies verified per-stock memberships and board IDs in one batch,
+    # removing the full-market catalogue as a mandatory single point of failure.
+    f10 = cached_call("f10_membership", {"codes": sorted(codes)}, 3 * 86400, 25,
+                      {"SECURITY_CODE", "BOARD_NAME", "NEW_BOARD_CODE", "IS_PRECISE"})
+    concept_map = {}
     catalogue_source = "eastmoney"
-    if catalogue.empty:
-        catalogue = cached_call("ths_catalogue", {}, 7 * 86400, 30, {"板块名称", "板块代码"})
-        catalogue_source = "ths"
-    if catalogue.empty:
-        return metadata, diagnostics
-    concept_map = {str(row["板块名称"]): str(row["板块代码"]) for row in catalogue.to_dict("records")}
+    if not f10.empty:
+        for code in codes:
+            evidence = precise_f10_concepts(f10.to_dict("records"), code)
+            metadata[code]["concepts"] = sorted(evidence)
+            metadata[code]["concept_evidence"] = evidence
+            metadata[code]["concept_membership_source"] = "eastmoney.F10"
+            concept_map.update({name: item["code"] for name, item in evidence.items()})
+    else:
+        catalogue = cached_call("em_catalogue", {}, 7 * 86400, 45, {"板块名称", "板块代码"})
+        if catalogue.empty:
+            catalogue = cached_call("ths_catalogue", {}, 7 * 86400, 30, {"板块名称", "板块代码"})
+            catalogue_source = "ths"
+        if catalogue.empty:
+            return metadata, diagnostics
+        concept_map = {str(row["板块名称"]): str(row["板块代码"]) for row in catalogue.to_dict("records")}
     # THS fallback accepts exact concept names only, never treats provider codes as interchangeable.
     for code in codes:
+        if not f10.empty:
+            continue
         boards = cached_call("membership", {"code": code}, 3 * 86400, 12, {"板块名称", "股票代码"})
         if not boards.empty:
             boards = boards[boards["股票代码"].astype(str).str.zfill(6) == code]
@@ -231,7 +262,8 @@ def enrich_and_select(picks, metadata, expected, screening, top=3):
                    score_after=pick.final_score, selected=False)
         audit[pick.code] = row
         pick.ranking_reason = (pick.ranking_reason + f"；行业={pick.industry or '未知'}；"
-                               f"题材有效覆盖={len(themes)}/{len(item.get('concepts', []))}；"
+                               f"题材归属={','.join(item.get('concepts', [])[:3]) or '缺失'}；"
+                               f"有效指数热度={len(themes)}/{len(item.get('concepts', []))}；"
                                f"题材分={score:.1f}").lstrip("；")
         if pick.excluded_by_risk or pick.risk_level == "high":
             row["rejection"] = "风险否决"

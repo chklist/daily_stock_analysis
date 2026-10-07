@@ -4,7 +4,7 @@ from unittest import TestCase
 
 import pandas as pd
 
-from scripts.proactive_metadata import dated_heat, enrich_and_select
+from scripts.proactive_metadata import dated_heat, enrich_and_select, precise_f10_concepts
 from src.services.screening.models import Pick, ScreeningConfig
 
 DAY = date(2026, 9, 30)
@@ -16,6 +16,19 @@ def pick(code, score=80, **kwargs):
 
 
 class MetadataTests(TestCase):
+    def test_f10_requires_matching_stock_and_explicit_evidence(self):
+        good = {"SECURITY_CODE": "601318", "BOARD_NAME": "互联网医疗", "NEW_BOARD_CODE": "BK0837",
+                "SELECTED_BOARD_REASON": "旗下公司提供在线医疗服务", "IS_PRECISE": "1", "BOARD_TYPE": None}
+        records = [good, dict(good, SECURITY_CODE="600519", BOARD_NAME="另一只股票"),
+                   dict(good, BOARD_NAME="行业", BOARD_TYPE="行业"),
+                   dict(good, BOARD_NAME="地域", BOARD_TYPE="板块"),
+                   dict(good, BOARD_NAME="无证据", SELECTED_BOARD_REASON=None),
+                   dict(good, BOARD_NAME="标签", IS_PRECISE="0"),
+                   dict(good, BOARD_NAME="非法代码", NEW_BOARD_CODE="BI0837")]
+        evidence = precise_f10_concepts(records, "601318")
+        self.assertEqual(list(evidence), ["互联网医疗"])
+        self.assertEqual(evidence["互联网医疗"]["code"], "BK0837")
+
     def setUp(self):
         self.cfg = ScreeningConfig(factor_weights={"value": .95, "theme_heat": .05})
 
