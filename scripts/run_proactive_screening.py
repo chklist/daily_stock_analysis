@@ -93,15 +93,38 @@ def execute(args, *, now=None, screen_fn=None, history_fn=None, pipeline_factory
     if screen_fn is None:
         from src.services.screening.config import Config as ScreeningConfig
         from src.services.screening.pipeline import screen
+        from src.services.screening.strategy import load_all_strategies
+        from scripts.proactive_metadata import collect_metadata, enrich_and_select
 
         def screen_fn():
             cfg = ScreeningConfig.from_env()
             cfg.risk_veto_high = True
             cfg.fallback_snapshot_path = None
-            return screen(args.strategy, market="cn", max_output=args.top,
+            cfg.portfolio_diversity_enabled = False
+            cfg.llm_candidate_multiplier = 1
+            result = screen(args.strategy, market="cn", max_output=18,
                           use_llm=False, collect_llm_candidate_context=False,
                           daily_enrich=False, industry_provider="none",
                           post_analyzers=["scorecard"], config=cfg)
+            validate_snapshot(result)
+            audit["candidate_pool"] = [asdict(p) for p in result.picks]
+            metadata, diagnostics = collect_metadata([p.code for p in result.picks], expected)
+            result.picks, details = enrich_and_select(
+                result.picks, metadata, expected,
+                load_all_strategies(cfg.strategies_dir)[args.strategy].screening, args.top)
+            audit["industry_theme"] = details
+            audit["metadata_diagnostics"] = diagnostics
+            audit["rejected"].update({code: row["rejection"] for code, row in details.items()
+                                      if row.get("rejection")})
+            result.portfolio_diversity_enabled = True
+            result.portfolio_concentration_notes = ["行业信息验证后，同一大类硬限制最多一只"]
+            LOG.info("[screening_metadata] pool=%s industry=%s theme=%s selected=%s",
+                     len(details), sum(bool(r["industry"]) for r in details.values()),
+                     sum(bool(r["verified_themes"]) for r in details.values()),
+                     [(p.code, p.industry) for p in result.picks])
+            if details and not result.picks:
+                raise RuntimeError("行业或风险校验后无可用候选，详见 industry_theme 诊断")
+            return result
 
     try:
         screened = screen_fn()
@@ -179,7 +202,8 @@ def execute(args, *, now=None, screen_fn=None, history_fn=None, pipeline_factory
                  f"全市场 {screened.snapshot_count} → 初筛 {screened.after_filter_count} → "
                  f"复核 {len(candidates)} → 入选 {len(approved)}。", "",
                  "AlphaSift 衍生引擎因子筛选 + DSA 模型复核；评分不是收益概率。",
-                 "未启用行业/概念增强，热点相关信息可能不完整。", ""]
+                 "行业验证后同一大类最多一只；题材仅计入最近完整交易日的有效数据，"
+                 "缺失或过期不计分，覆盖范围见选股记录。", ""]
         if failed:
             lines.append(f"部分分析失败：{', '.join(failed)}；本轮结果不完整。")
         if approved:

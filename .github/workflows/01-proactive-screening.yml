@@ -26,6 +26,8 @@ on:
     paths:
       - scripts/run_proactive_screening.py
       - scripts/tests/test_proactive_screening.py
+      - scripts/proactive_metadata.py
+      - scripts/tests/test_proactive_metadata.py
       - .github/workflows/01-proactive-screening.yml
 
 permissions:
@@ -44,11 +46,10 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
-      - run: python -m pip install pandas 'exchange-calendars>=4.13.0'
-      - run: python -m unittest discover -s scripts/tests -p test_proactive_screening.py -v
+      - run: python -m pip install pandas pyyaml 'exchange-calendars>=4.13.0'
+      - run: python -m unittest discover -s scripts/tests -p 'test_proactive*.py' -v
 
   screen-and-analyze:
-    if: github.event_name != 'push'
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -99,8 +100,8 @@ jobs:
       - name: 全市场筛选、数据校验、DSA 复核与推送
         env:
           STRATEGY: ${{ inputs.strategy || 'balanced_alpha' }}
-          FORCE_RUN: ${{ inputs.force_run || false }}
-          SCREEN_ONLY: ${{ inputs.screen_only || false }}
+          FORCE_RUN: ${{ github.event_name == 'push' || inputs.force_run || false }}
+          SCREEN_ONLY: ${{ github.event_name == 'push' || inputs.screen_only || false }}
           NOTIFY: ${{ github.event_name == 'schedule' || inputs.notify }}
         run: |
           mkdir -p reports/proactive logs
