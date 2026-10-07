@@ -334,7 +334,13 @@ def _build_realtime_failure_message(
     )
 
 
-def _akshare_call_with_timeout(
+def _akshare_call_with_timeout(func, *args, timeout=None, call_name="akshare", **kwargs):
+    from data_provider.eastmoney_resilience import circuits, operation_channel
+    return circuits.call(operation_channel(call_name), _isolated_call_with_timeout,
+                         func, *args, timeout=timeout, call_name=call_name, **kwargs)
+
+
+def _isolated_call_with_timeout(
     func,
     *args,
     timeout: Optional[float] = None,
@@ -349,7 +355,7 @@ def _akshare_call_with_timeout(
     parent_conn, child_conn = ctx.Pipe(duplex=False)
     process = ctx.Process(
         target=_akshare_timeout_worker,
-        args=(child_conn, func, args, kwargs),
+        args=(child_conn, func, args, kwargs, wait_seconds),
         name=f"akshare-{call_name}",
         daemon=True,
     )
@@ -376,9 +382,11 @@ def _akshare_call_with_timeout(
     raise value
 
 
-def _akshare_timeout_worker(conn, func, args, kwargs) -> None:
+def _akshare_timeout_worker(conn, func, args, kwargs, seconds) -> None:
     try:
-        conn.send((True, func(*args, **kwargs)))
+        from data_provider.eastmoney_resilience import bounded_worker_transport
+        with bounded_worker_transport(seconds):
+            conn.send((True, func(*args, **kwargs)))
     except BaseException as exc:
         try:
             conn.send((False, exc))

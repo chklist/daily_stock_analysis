@@ -29,7 +29,7 @@ class ReliabilityTests(TestCase):
             with self.subTest(code=code, market=market), \
                     patch("data_provider.eastmoney_history.requests.Session") as factory:
                 factory.return_value.__enter__.return_value.get.return_value = self.response(code, market)
-                with self.assertRaises(RuntimeError):
+                with self.assertRaises(ValueError):
                     board_history("BK0721", "20260920", "20260930")
 
     def test_fund_flow_uses_net_amount_not_ratio(self):

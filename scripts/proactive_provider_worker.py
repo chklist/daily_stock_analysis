@@ -97,5 +97,6 @@ if __name__ == "__main__":
         frame = fetch(sys.argv[1], json.loads(sys.argv[2]))
         payload = {"records": json.loads(frame.to_json(orient="records", date_format="iso", force_ascii=False))}
     except Exception as exc:
-        payload = {"error": type(exc).__name__}
+        from data_provider.eastmoney_resilience import error_code
+        payload = {"error": error_code(exc)}
     Path(sys.argv[3]).write_text(json.dumps(payload, ensure_ascii=False, allow_nan=False), encoding="utf-8")

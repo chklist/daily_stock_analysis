@@ -5,9 +5,15 @@ import time
 
 import pandas as pd
 import requests
+from data_provider.eastmoney_resilience import circuits, error_code
 
 
 def history_rows(secid, *, flow=False, start=None, end=None):
+    return circuits.call("flow" if flow else "board_history", _history_rows,
+                         secid, flow=flow, start=start, end=end)
+
+
+def _history_rows(secid, *, flow=False, start=None, end=None):
     if not re.fullmatch(r"(?:90\.BK\d{4,6}|[01]\.\d{6})", secid):
         raise ValueError("invalid history symbol")
     fields = 15 if flow else 11
@@ -19,6 +25,7 @@ def history_rows(secid, *, flow=False, start=None, end=None):
     path = "fflow/daykline/get" if flow else "kline/get"
     deadline = time.monotonic() + 10
     errors = []
+    last_error = None
     with requests.Session() as session:
         hosts = ("push2his.eastmoney.com", "91.push2his.eastmoney.com")
         routes = [(host, True) for host in hosts]
@@ -45,8 +52,13 @@ def history_rows(secid, *, flow=False, start=None, end=None):
                     raise ValueError("history_empty_or_invalid_schema")
                 return rows, host
             except (requests.RequestException, ValueError, TypeError, AttributeError) as exc:
-                errors.append(type(exc).__name__)
-    raise RuntimeError("eastmoney_history_unavailable:" + ",".join(errors))
+                errors.append(error_code(exc))
+                last_error = exc
+    if last_error is not None:
+        # Preserve exception type for the shared circuit, with sanitized diagnostics.
+        last_error.args = ("eastmoney_history_unavailable:" + ",".join(errors),)
+        raise last_error
+    raise TimeoutError("eastmoney_history:budget_exhausted")
 
 
 def board_history(symbol, start, end):

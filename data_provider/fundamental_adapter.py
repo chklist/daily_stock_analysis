@@ -321,7 +321,8 @@ class AkshareFundamentalAdapter:
                 if isinstance(df, pd.DataFrame) and not df.empty:
                     return df, func_name, errors
             except Exception as exc:
-                errors.append(f"{func_name}:{type(exc).__name__}")
+                from data_provider.eastmoney_resilience import error_code
+                errors.append(f"{func_name}:{error_code(exc)}")
                 continue
         return None, None, errors
 

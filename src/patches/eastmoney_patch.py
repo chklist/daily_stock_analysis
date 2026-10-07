@@ -57,10 +57,13 @@ def _get_nid(user_agent):
     """
     now = time.time()
     # 检查缓存是否有效，避免重复请求
-    if _cache.data and now < _cache.expire_at:
+    if now < _cache.expire_at:
         return _cache.data
     # 使用线程锁确保并发安全
     with _cache.lock:
+        now = time.time()
+        if now < _cache.expire_at:
+            return _cache.data
         try:
             def generate_uuid_md5():
                 """

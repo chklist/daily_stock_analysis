@@ -134,7 +134,10 @@ class TestFetcherLogging(unittest.TestCase):
             )
         )
 
-        with patch.dict(sys.modules, {"efinance": fake_efinance}):
+        with patch.dict(sys.modules, {"efinance": fake_efinance}), patch(
+            "data_provider.efinance_fetcher._ef_call_with_timeout",
+            side_effect=requests.exceptions.ConnectionError("Remote end closed connection without response"),
+        ):
             with patch.object(fetcher, "_set_random_user_agent", return_value=None), patch.object(
                 fetcher, "_enforce_rate_limit", return_value=None
             ):

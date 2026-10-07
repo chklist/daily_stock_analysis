@@ -25,7 +25,7 @@ import os
 import random
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Tuple
@@ -192,26 +192,12 @@ def _is_us_code(stock_code: str) -> bool:
 
 
 def _ef_call_with_timeout(func, *args, timeout=None, **kwargs):
-    """Run an efinance library call in a thread with a timeout.
-
-    efinance internally uses requests/urllib3 with no timeout, so when
-    eastmoney hosts are unreachable the call can hang for many minutes.
-    This helper caps the *calling thread's* wait time.  Note: Python threads
-    cannot be forcibly killed, so the worker thread may continue running in
-    the background until the OS-level TCP timeout fires or the process exits.
-    This is acceptable — the calling thread returns promptly on timeout.
-    """
-    if timeout is None:
-        timeout = _EF_CALL_TIMEOUT
-    # Do NOT use 'with ThreadPoolExecutor(...)' here: the context manager calls
-    # shutdown(wait=True) on __exit__, which would re-block on the hung thread.
-    executor = ThreadPoolExecutor(max_workers=1)
-    try:
-        future = executor.submit(func, *args, **kwargs)
-        return future.result(timeout=timeout)
-    finally:
-        # wait=False: calling thread returns immediately; worker cleans up later
-        executor.shutdown(wait=False)
+    """Reuse the spawn worker so timed-out efinance calls are killed and reaped."""
+    from data_provider.akshare_fetcher import _akshare_call_with_timeout
+    return _akshare_call_with_timeout(
+        func, *args, timeout=_EF_CALL_TIMEOUT if timeout is None else timeout,
+        call_name="ef." + func.__name__, **kwargs,
+    )
 
 
 def _classify_eastmoney_error(exc: Exception) -> Tuple[str, str]:

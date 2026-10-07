@@ -25,6 +25,11 @@ on:
   push:
     paths:
       - scripts/run_proactive_screening.py
+      - data_provider/eastmoney_resilience.py
+      - data_provider/efinance_fetcher.py
+      - data_provider/akshare_fetcher.py
+      - src/patches/eastmoney_patch.py
+      - tests/test_eastmoney_resilience.py
       - data_provider/eastmoney_history.py
       - data_provider/base.py
       - data_provider/fundamental_adapter.py
@@ -109,7 +114,9 @@ jobs:
       - name: 安装项目依赖（已包含 AlphaSift 衍生选股引擎）
         run: python -m pip install -r requirements.txt
       - name: 验证数据回退、缓存与通知回归
-        run: python -m unittest discover -s tests -p 'test_provider_reliability.py' -v
+        run: |
+          python -m unittest discover -s tests -p 'test_provider_reliability.py' -v
+          python -m unittest discover -s tests -p 'test_eastmoney_resilience.py' -v
       - name: 恢复概念目录和归属缓存
         uses: actions/cache/restore@v4
         with:
