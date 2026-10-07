@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- [修复] 主动选股题材采集改用可终止子进程，增加目录/归属有效期缓存、失败冷却及同花顺目录和指数备用来源；热度按交易日期验证，Actions 跨运行复用缓存。
+
 - [改进] 主动选股补全前 18 名候选行业与有日期的题材数据，移除缺失题材中性加分，按金融等大类执行最多一只的硬限制并保存覆盖诊断。
 
 - [修复] 主动选股 Actions 增加 TickFlow 密钥及可选参数映射，与每日分析使用同一仓库 Secret。

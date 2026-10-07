@@ -27,6 +27,9 @@ on:
       - scripts/run_proactive_screening.py
       - scripts/tests/test_proactive_screening.py
       - scripts/proactive_metadata.py
+      - scripts/proactive_provider_cache.py
+      - scripts/proactive_provider_worker.py
+      - scripts/tests/test_proactive_provider_cache.py
       - scripts/tests/test_proactive_metadata.py
       - .github/workflows/01-proactive-screening.yml
 
@@ -97,6 +100,12 @@ jobs:
           cache: pip
       - name: 安装项目依赖（已包含 AlphaSift 衍生选股引擎）
         run: python -m pip install -r requirements.txt
+      - name: 恢复概念目录和归属缓存
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/proactive-metadata
+          key: proactive-metadata-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: proactive-metadata-v1-
       - name: 独立验证行业与题材接口（不依赖全市场快照）
         if: github.event_name == 'push'
         run: python -m scripts.proactive_metadata
@@ -114,6 +123,12 @@ jobs:
           if [ "$NOTIFY" = "true" ]; then args+=(--notify); fi
           set -o pipefail
           python scripts/run_proactive_screening.py "${args[@]}" 2>&1 | tee logs/proactive-screening.log
+      - name: 保存有效元数据缓存和短期失败冷却
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/proactive-metadata
+          key: proactive-metadata-v1-${{ github.run_id }}-${{ github.run_attempt }}
       - name: 保存选股依据、复核结果和日志
         if: always()
         uses: actions/upload-artifact@v6

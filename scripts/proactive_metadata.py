@@ -36,7 +36,7 @@ def diagnose():
     LOG.info("Metadata probe: %s", json.dumps(metadata, ensure_ascii=False))
 
 
-def dated_heat(frame, expected):
+def dated_heat(frame, expected, source="akshare.stock_board_concept_hist_em"):
     """Never interpret undated rankings or stale board history as current heat."""
     if frame is None or frame.empty or not {"日期", "涨跌幅"}.issubset(frame.columns):
         return None
@@ -53,15 +53,15 @@ def dated_heat(frame, expected):
         return None
     return {"date": str(expected), "change_pct": change,
             "score": max(0.0, min(100.0, 50 + 10 * change)),
-            "source": "akshare.stock_board_concept_hist_em"}
+            "source": source}
 
 
 def collect_metadata(codes, expected, budget=180):
     """Refresh classification each run; no old heat cache can enter scoring."""
-    import akshare as ak
     import efinance as ef
     from data_provider import DataFetcherManager
     from data_provider.tickflow_fetcher import TickFlowFetcher
+    from scripts.proactive_provider_cache import ProviderCache, isolated_fetch
 
     manager = DataFetcherManager()
     deadline = time.monotonic() + budget
@@ -117,15 +117,58 @@ def collect_metadata(codes, expected, budget=180):
                 if code in missing and industry:
                     metadata[code].update(industry=industry, industry_source="efinance.base_info")
 
-    catalogue = call("concept_catalogue", ak.stock_board_concept_name_em)
-    if not isinstance(catalogue, pd.DataFrame) or "板块名称" not in catalogue.columns:
+    cache = ProviderCache()
+    failures = {}
+
+    def cached_call(operation, args, ttl, timeout, required):
+        import json
+        key = operation + json.dumps(args, sort_keys=True)
+        records = cache.get(key, ttl)
+        status = "cache_hit"
+        started = time.monotonic()
+        if records is None:
+            if cache.get("cooldown:" + operation, 1800):
+                status = "cooldown"
+            elif deadline - started < 2:
+                status = "budget_exhausted"
+            else:
+                payload = isolated_fetch(operation, args, min(timeout, deadline - started))
+                records = payload.get("records")
+                status = payload.get("error") or "ok"
+                if not isinstance(records, list) or not records or not all(
+                        isinstance(row, dict) and required.issubset(row) for row in records):
+                    records = None
+                    status = payload.get("error") or "EmptyOrInvalidSchema"
+                    failures[operation] = failures.get(operation, 0) + 1
+                    if "catalogue" in operation or failures[operation] >= 2:
+                        cache.put("cooldown:" + operation, True)
+                elif operation.endswith("_heat") and dated_heat(pd.DataFrame(records), expected) is None:
+                    records = None
+                    status = "StaleOrInvalidHeat"
+                else:
+                    cache.put(key, records)
+        elapsed = round((time.monotonic() - started) * 1000)
+        diagnostics.append({"task": operation, "status": status, "elapsed_ms": elapsed})
+        LOG.info("[screening_metadata] %s %s %sms", operation, status, elapsed)
+        return pd.DataFrame(records) if records else pd.DataFrame()
+
+    # Catalogue/membership are slow-changing metadata. Heat is keyed by session below.
+    catalogue = cached_call("em_catalogue", {}, 7 * 86400, 45, {"板块名称", "板块代码"})
+    catalogue_source = "eastmoney"
+    if catalogue.empty:
+        catalogue = cached_call("ths_catalogue", {}, 7 * 86400, 30, {"板块名称", "板块代码"})
+        catalogue_source = "ths"
+    if catalogue.empty:
         return metadata, diagnostics
-    concept_names = set(catalogue["板块名称"].dropna().astype(str))
-    # Membership is checked against the concept catalogue, never guessed from board names.
+    concept_map = {str(row["板块名称"]): str(row["板块代码"]) for row in catalogue.to_dict("records")}
+    # THS fallback accepts exact concept names only, never treats provider codes as interchangeable.
     for code in codes:
-        boards = call(f"concept_membership:{code}", lambda code=code: ef.stock.get_belong_board(code), 5)
-        if isinstance(boards, pd.DataFrame) and "板块名称" in boards.columns:
-            metadata[code]["concepts"] = sorted(set(boards["板块名称"].astype(str)) & concept_names)
+        boards = cached_call("membership", {"code": code}, 3 * 86400, 12, {"板块名称", "股票代码"})
+        if not boards.empty:
+            boards = boards[boards["股票代码"].astype(str).str.zfill(6) == code]
+            metadata[code]["concepts"] = sorted(set(boards["板块名称"].astype(str)) & set(concept_map))
+        metadata[code]["concept_catalogue_source"] = catalogue_source
+        metadata[code]["concept_membership_source"] = "efinance.eastmoney"
 
     # Round-robin coverage across stocks, capped at 24 unique boards; coverage is audited.
     pending = []
@@ -135,10 +178,19 @@ def collect_metadata(codes, expected, budget=180):
                 pending.append(item["concepts"][index])
     heat = {}
     for name in pending[:24]:
-        frame = call(f"concept_history:{name}", lambda name=name: ak.stock_board_concept_hist_em(
-            symbol=name, period="daily", start_date=(expected - timedelta(days=10)).strftime("%Y%m%d"),
-            end_date=expected.strftime("%Y%m%d"), adjust=""), 5)
-        value = dated_heat(frame, expected)
+        operation = "em_heat" if catalogue_source == "eastmoney" else "ths_heat"
+        args = {"symbol": concept_map[name] if operation == "em_heat" else name,
+                "start": (expected - timedelta(days=10)).strftime("%Y%m%d"),
+                "end": expected.strftime("%Y%m%d")}
+        frame = cached_call(operation, args, 86400, 15, {"日期", "涨跌幅"})
+        value = dated_heat(frame, expected, operation)
+        if value is None and operation == "em_heat":
+            # An independent provider, with explicit provenance and its own dated index.
+            ths = cached_call("ths_catalogue", {}, 7 * 86400, 30, {"板块名称", "板块代码"})
+            if not ths.empty and name in set(ths["板块名称"].astype(str)):
+                args["symbol"] = name
+                frame = cached_call("ths_heat", args, 86400, 15, {"日期", "涨跌幅"})
+                value = dated_heat(frame, expected, "ths_heat")
         if value is not None:
             heat[name] = dict(value, name=name)
     for item in metadata.values():
